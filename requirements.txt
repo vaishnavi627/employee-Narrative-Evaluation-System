@@ -1,0 +1,6 @@
+streamlit
+pandas
+python-dotenv
+PyPDF2
+plotly
+groq
