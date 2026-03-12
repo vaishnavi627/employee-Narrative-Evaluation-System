@@ -9,7 +9,8 @@ plotly
 python-dotenv
 groq
 langsmith
-Application deployed Url:https://employee-narrative-evaluation-systemgit-rsp3cqualo5sjfqhmhgrov.streamlit.app/
+
+
 
 
 
