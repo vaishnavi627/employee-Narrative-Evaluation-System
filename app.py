@@ -11,7 +11,7 @@ from langsmith import traceable
 import json
 from groq import Groq
 import os
-load_dotenv()
+
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
 os.environ["LANGCHAIN_PROJECT"] = "employee-narrative-evaluator-system"
 os.environ["LANGCHAIN_API_KEY"] = st.secrets["LANGCHAIN_API_KEY"]
@@ -449,6 +449,7 @@ if application == "Employee Narrative Evaluation":
                         file_name=filename,
                         mime="text/csv"
                     )
+
 
 
 
