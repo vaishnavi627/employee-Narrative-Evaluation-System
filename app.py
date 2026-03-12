@@ -1,7 +1,6 @@
-import streamlit as st
+
 from PyPDF2 import PdfReader
 import pandas as pd
-import nltk
 from nltk.tokenize import sent_tokenize
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -9,16 +8,21 @@ import plotly.graph_objects as go
 from datetime import datetime
 from langsmith import traceable
 import json
-from groq import Groq
 import os
+import streamlit as st
+import nltk
+from groq import Groq
 
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
 os.environ["LANGCHAIN_PROJECT"] = "employee-narrative-evaluator-system"
 os.environ["LANGCHAIN_API_KEY"] = st.secrets["LANGCHAIN_API_KEY"]
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+
 @st.cache_resource
 def download_nltk():
     nltk.download("punkt")
+    nltk.download("punkt_tab")
+
 
 download_nltk()
 
@@ -449,6 +453,7 @@ if application == "Employee Narrative Evaluation":
                         file_name=filename,
                         mime="text/csv"
                     )
+
 
 
 
