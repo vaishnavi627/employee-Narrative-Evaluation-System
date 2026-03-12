@@ -1,23 +1,34 @@
 import streamlit as st
 from PyPDF2 import PdfReader
-from groq import Groq
 import pandas as pd
-import json
-from datetime import datetime
+import nltk
+from nltk.tokenize import sent_tokenize
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
 import plotly.graph_objects as go
-import os
+from datetime import datetime
+from langsmith import traceable
 from dotenv import load_dotenv
-# ---------------- PAGE CONFIG ----------------
-st.set_page_config(
-    page_title="Agentic AI Learning Program",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-col1, col2, col3 = st.columns([2,1,2])
+import json
+from groq import Groq
+import os
+load_dotenv()
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_PROJECT"] = "employee-narrative-evaluator-system"
 
-with col2:
-    st.image("images/llm.png", width=300)
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+nltk.download("punkt")
+
+
+# ---------------- PAGE CONFIG ----------------
+
+st.set_page_config(
+    page_title="AI Narrative Evaluation System",
+    page_icon="📊",
+    layout="wide"
+)
+
 st.markdown("""
 <style>
 
@@ -90,16 +101,167 @@ div.stDownloadButton > button:hover {
 
 </style>
 """, unsafe_allow_html=True)
-# ---------------- EVALUATION RULES ----------------
+col1, col2, col3 = st.columns([2,1,2])
+
+with col2:
+    st.image("images/llm.png", width=300)
+
+st.markdown("""
+<div style="text-align:center;">
+<h1 style="font-size:40px;">Agentic AI Learning Program - Foundation Learning</h1>
+<hr>
+</div>""",unsafe_allow_html=True)
+
+
+
+@traceable(name="employee_evaluation_llm")
+def evaluate_with_llm(rule, evidence,status):
+    
+    prompt = f"""
+You are evaluating an employee narrative.
+
+Criterion:
+{rule}
+
+Evidence from narrative:
+{evidence}
+
+The evaluation result is: {status}
+
+Explain briefly why the result is {status}.
+"""
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role":"user","content":prompt}],
+        temperature=0,
+         
+    )
+
+    return response.choices[0].message.content
+@traceable(name="suggestion_generation_llm")
+def generate_suggestions(criteria, evidence):
+
+    prompt = f"""
+An employee failed the following performance criterion.
+
+Criterion:
+{criteria}
+
+Evidence from narrative:
+{evidence}
+
+Provide 3 professional suggestions to improve performance.
+
+Return short bullet points.
+"""
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role":"user","content":prompt}],
+        temperature=0.3,
+        
+
+    )
+
+    return response.choices[0].message.content
+
+
+def semantic_evaluation(rules, sentences, sentence_embeddings, embedding_model,narrative):
+
+        results = []
+        narrative_embedding = embedding_model.encode(narrative)
+        used_indices = set()
+        for rule, rule_text in rules.items():
+        
+            rule_embedding = embedding_model.encode(rule_text)
+            similarities = cosine_similarity(
+        [rule_embedding],
+        sentence_embeddings
+    )[0]
+            best_index = similarities.argmax()
+
+            evidence = sentences[best_index]
+           
+            # get top 3 sentences
+            sorted_indices = similarities.argsort()[::-1]
+
+            top_scores = similarities[sorted_indices[:3]]
+
+            best_index = None
+
+            for idx in sorted_indices:
+                if idx not in used_indices:
+                    best_index = idx
+                    used_indices.add(idx)
+                    break
+
+            # fallback if all sentences already used
+            if best_index is None:
+                best_index = sorted_indices[0]
+
+            evidence = sentences[best_index]
+
+            best_score = similarities[best_index]
+
+            score_10 = round(best_score * 10, 2)
+
+            intent_score = f"{round(top_scores.mean() * 100, 2)}%"
+
+            threshold = 5
+
+            if score_10 >= threshold:
+                status = "PASS"
+            else:
+                status = "FAIL"
+            reason = evaluate_with_llm(rule_text, evidence, status)  
+
+            results.append({
+                "Criteria": rule,
+                "Score (0-10)": score_10,
+                "Intent Score(%)": intent_score,
+                "Status": status,
+                "Reason":reason,
+                "Evidence": evidence
+              
+            })
+
+        return pd.DataFrame(results)
+
+@st.cache_resource
+def load_model():
+    return SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+
+embedding_model = load_model()
+
+# ---------------- RUBRIC RULES ----------------
+
 rules = {
-    "Innovation Impact": "Employee must demonstrate innovation with measurable impact.",
-    "Research Rigor": "Work should follow structured research methodology.",
-    "Strategic Alignment": "Work must align with organizational goals.",
-    "Measurable Outcomes": "Quantifiable results must be clearly mentioned.",
-    "Cross-Functional Collaboration": "Collaboration across teams must be demonstrated.",
-    "Problem Solving & Analytical Depth": "Complex problem solving must be shown.",
-    "Knowledge Dissemination": "Findings must be shared with stakeholders."
+"Innovation Impact": "Employee must demonstrate innovation with measurable impact.",
+"Research Rigor": "Work should follow structured research methodology.",
+"Strategic Alignment": "Work must align with organizational goals.",
+"Measurable Outcomes": "Quantifiable results must be clearly mentioned.",
+"Cross-Functional Collaboration": "Collaboration across teams must be demonstrated.",
+"Problem Solving & Analytical Depth": "Complex problem solving must be shown.",
+"Knowledge Dissemination": "Findings must be shared with stakeholders."
 }
+
+# ---------------- PDF READER ----------------
+
+def read_pdf(file):
+
+    reader = PdfReader(file)
+
+    text = ""
+
+    for page in reader.pages:
+        if page.extract_text():
+            text += page.extract_text() + "\n"
+
+    return text
+
+# ---------------- SIDEBAR ----------------
+
 with st.sidebar:
     st.markdown(
     "<h2 style='color:white;text-align: center; font-size:30px;'>Solution Scope</h2>",
@@ -123,7 +285,6 @@ with st.sidebar:
         "GCP Services Used",
         ["Select Service", "Cloud Run", "Secret Manager"]
     )
-    
     st.markdown("<div style='margin-top:40px;'></div>", unsafe_allow_html=True)
     if st.button("Clear/Reset",use_container_width=True):
         st.rerun()
@@ -131,8 +292,6 @@ with st.sidebar:
     "<div style='text-align: center;color:white;'>Build & Deployed on</div>",
     unsafe_allow_html=True
 )
-
-    st.markdown("<br>", unsafe_allow_html=True)
     col1, col2, col3,col4 = st.columns(4)
 
     with col1:
@@ -145,23 +304,11 @@ with st.sidebar:
         st.image("images/aws.png", width=60)
     with col4:
         st.image("images/azure.png",width=60)
-col1, col2, col3 = st.columns(3)
 
 
-st.markdown("""
-<div style="text-align:center;">
-<h1 style="font-size:30px;">Autonomous Document Intelligence,Powered by Agentic AI</h1>
-<hr>
-</div>""",unsafe_allow_html=True)
-
-if application == "Select Application":
-    col1,col2 = st.columns([3,1])
-    with col1:
-        st.header("Select Application")
-    with col2:
-        st.info("Please select the application from the sidebar to continue")
 
 # ---------------- MAIN APPLICATION ----------------
+
 if application == "Employee Narrative Evaluation":
 
     st.header("Employee Narrative Evaluation System")
@@ -171,184 +318,132 @@ if application == "Employee Narrative Evaluation":
         type=["pdf"]
     )
 
-    load_dotenv()
+    # ---------------- RUN EVALUATION ----------------
 
-    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-
-    def read_pdf(file):
-        reader = PdfReader(file)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text()
-        return text
-
-    if uploaded_file:
+    if uploaded_file and st.button("Run Evaluation"):
 
         narrative = read_pdf(uploaded_file)
 
-        if st.button("Run Evaluation"):
+        sentences = sent_tokenize(narrative)
 
-            with st.spinner("AI evaluating performance..."):
+        sentence_embeddings = embedding_model.encode(sentences)
 
-                prompt = f"""
-Evaluate the employee narrative strictly using this rubric.
+        df = semantic_evaluation(
+            rules,
+            sentences,
+            sentence_embeddings,
+            embedding_model,
+            narrative
+        )
 
-Return STRICT JSON format:
+        st.session_state["evaluation"] = df
 
-{{
-"Innovation Impact": {{"result": "YES/NO", "evidence": ""}},
-"Research Rigor": {{"result": "YES/NO", "evidence": ""}},
-"Strategic Alignment": {{"result": "YES/NO", "evidence": ""}},
-"Measurable Outcomes": {{"result": "YES/NO", "evidence": ""}},
-"Cross-Functional Collaboration": {{"result": "YES/NO", "evidence": ""}},
-"Problem Solving & Analytical Depth": {{"result": "YES/NO", "evidence": ""}},
-"Knowledge Dissemination": {{"result": "YES/NO", "evidence": ""}}
-}}
 
-Narrative:
-{narrative}
-"""
+    # ---------------- DISPLAY RESULTS ----------------
 
-                response = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0,
-                    response_format={"type": "json_object"}
+    if "evaluation" in st.session_state:
+
+        df = st.session_state["evaluation"]
+
+        st.subheader("Semantic Evaluation Results")
+
+        st.dataframe(df, use_container_width=True)
+
+        # ---------------- HUMAN REVIEW ----------------
+
+        st.subheader("Human Review (Human-in-the-Loop)")
+
+        human_results = []
+
+        for i, row in df.iterrows():
+
+            st.markdown(f"### {row['Criteria']}")
+
+            decision = st.selectbox(
+                "Human Decision",
+                ["PASS", "FAIL"],
+                index=0 if row["Status"] == "PASS" else 1,
+                key=f"decision_{i}"
+            )
+
+            feedback = ""
+
+            # Show feedback box ONLY if decision changed
+            if decision != row["Status"]:
+
+                feedback = st.text_area(
+                    "Feedback",
+                    placeholder="Explain the reason for changing the AI decision...",
+                    key=f"feedback_{i}"
                 )
 
-                data = json.loads(response.choices[0].message.content)
+            human_results.append({
+                "Criteria": row["Criteria"],
+                "Score": row["Score (0-10)"],
+                "AI Status": row["Status"],
+                "Human Decision": decision,
+                "Human Feedback": feedback,
+                "Evidence": row["Evidence"]
+            })
 
-                rows = []
-                for key, value in data.items():
-                    rows.append({
-                        "Criteria": key,
-                        "Result": value["result"],
-                        "Evidence": value["evidence"]
-                    })
+        human_df = pd.DataFrame(human_results)
 
-                df = pd.DataFrame(rows)
+        # ---------------- FINALIZE EVALUATION ----------------
 
-                # ---------------- DECISION SUMMARY ----------------
-                st.subheader("Decision Summary")
-                st.dataframe(df, use_container_width=True)
+        if st.button("Finalize Evaluation"):
 
-                # ---------------- REASONING ----------------
-                reasoning_rows = []
+            pass_count = (human_df["Human Decision"] == "PASS").sum()
 
-                for key, value in data.items():
+            total = len(human_df)
 
-                    status = "PASS" if value["result"] == "YES" else "FAIL"
+            percentage = round((pass_count / total) * 100, 2)
 
-                    reasoning_rows.append({
-                        "Qualification": key,
-                        "Rule Requirement": rules.get(key, ""),
-                        "Narrative Evidence": value["evidence"],
-                        "Status": status
-                    })
+            st.subheader("Final Performance Score")
 
-                reasoning_df = pd.DataFrame(reasoning_rows)
+            fig = go.Figure(go.Indicator(
+                mode="gauge+number",
+                value=percentage,
+                number={'suffix': "%"},
+                gauge={'axis': {'range': [0, 100]}}
+            ))
 
-                st.subheader("Detailed Reasoning")
-                st.dataframe(reasoning_df, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True)
 
-                # ---------------- SCORE ----------------
-                yes_count = (df["Result"] == "YES").sum()
-                total = len(df)
-                percentage = round((yes_count / total) * 100, 2)
+            if percentage >= 70:
+                st.success("MEETS STANDARD")
+            else:
+                st.error("DOES NOT MEET STANDARD")
 
-                st.subheader("Performance Score")
+        # ---------------- IMPROVEMENT SUGGESTIONS ----------------
 
-                fig = go.Figure(go.Indicator(
-                    mode="gauge+number",
-                    value=percentage,
-                    number={'suffix': "%"},
-                    gauge={
-                        'axis': {'range': [0, 100]}
-                    }
-                ))
+            failed_criteria = human_df[human_df["Human Decision"] == "FAIL"]
 
-                fig.update_layout(height=350)
-
-                st.plotly_chart(fig, use_container_width=True)
-
-                if yes_count == total:
-                    st.success("MEETS STANDARD")
-                else:
-                    st.error("DOES NOT MEET STANDARD")
-
-                # ---------------- SUGGESTIONS ----------------
-                failed = [k for k, v in data.items() if v["result"] == "NO"]
-
-                if failed:
-
-                   suggestion_prompt = f"""
-Provide professional improvement recommendations for EACH failed criterion separately.
-
-Failed Criteria:
-{failed}
-
-Instructions:
-- For every criterion, create a separate section.
-- Show the criterion name as a heading.
-- Under each heading, provide 2–3 bullet point recommendations.
-- Each bullet point must be on a new line.
-- Keep recommendations short and professional.
-
-Example format:
-
-Innovation Impact:
-- recommendation
-- recommendation
-
-Research Rigor:
-- recommendation
-- recommendation
-"""
-
-                suggestion_response = client.chat.completions.create(
-                        model="llama-3.3-70b-versatile",
-                        messages=[{"role": "user", "content": suggestion_prompt}]
-                    )
-
-                suggestions = suggestion_response.choices[0].message.content
+            if len(failed_criteria) > 0:
 
                 st.subheader("Improvement Recommendations")
-                st.write(suggestions)
-                csv = df.to_csv(index=False).encode("utf-8")
-                
+
+                failed_rows = human_df[human_df["Human Decision"] == "FAIL"]
+
+                for i, row in failed_rows.iterrows():
+
+                    st.markdown(f"### {row['Criteria']}")
+
+                    suggestions = generate_suggestions(
+                        row["Criteria"],
+                        row["Evidence"]
+                    )
+
+                    st.write(suggestions)
+
+        # ---------------- DOWNLOAD REPORT ----------------
+
+                csv = human_df.to_csv(index=False).encode("utf-8")
+
                 filename = f"evaluation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+
                 st.download_button(
-                    "Download Report",
-                    data=csv,
-                    file_name=filename,
-                    mime="text/csv",
-                    
-                )
-
-                # # ---------------- SAVE HISTORY ----------------
-                # 
-
-
-                
-                # history_file = "evaluation_history.csv"
-
-                # history_data = df.copy()
-                # history_data["Score"] = percentage
-                # history_data["Evaluation Time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-                # if os.path.exists(history_file):
-                #     history_data.to_csv(history_file, mode="a", header=False, index=False)
-                # else:
-                #     history_data.to_csv(history_file, index=False)
-
-                # # ---------------- DOWNLOAD ----------------
-               
-
-                # # ---------------- HISTORY TABLE ----------------
-                # if os.path.exists(history_file):
-
-                #     st.subheader("Evaluation History")
-
-                #     history_df = pd.read_csv(history_file)
-
-                #     st.dataframe(history_df, use_container_width=True)
+                        "Download Report",
+                        data=csv,
+                        file_name=filename,
+                        mime="text/csv"
+                    )
