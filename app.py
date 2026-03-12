@@ -16,8 +16,7 @@ load_dotenv()
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
 os.environ["LANGCHAIN_PROJECT"] = "employee-narrative-evaluator-system"
 
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-
+client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 @st.cache_resource
 def download_nltk():
     nltk.download("punkt")
@@ -451,4 +450,5 @@ if application == "Employee Narrative Evaluation":
                         file_name=filename,
                         mime="text/csv"
                     )
+
 
