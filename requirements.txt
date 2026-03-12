@@ -1,7 +1,14 @@
 streamlit
 pandas
-python-dotenv
+numpy
+nltk
+sentence-transformers
+transformers
+torch
+scikit-learn
 PyPDF2
 plotly
+python-dotenv
 groq
-nltk
+langsmith
+
