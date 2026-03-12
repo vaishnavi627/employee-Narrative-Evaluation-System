@@ -9,5 +9,6 @@ plotly
 python-dotenv
 groq
 langsmith
-torch==2.2.2
+
+
 
