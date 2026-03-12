@@ -3,12 +3,11 @@ pandas
 numpy
 nltk
 sentence-transformers
-transformers
-torch
 scikit-learn
 PyPDF2
 plotly
 python-dotenv
 groq
 langsmith
+torch==2.2.2
 
