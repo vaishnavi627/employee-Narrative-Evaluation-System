@@ -8,7 +8,6 @@ from sklearn.metrics.pairwise import cosine_similarity
 import plotly.graph_objects as go
 from datetime import datetime
 from langsmith import traceable
-from dotenv import load_dotenv
 import json
 from groq import Groq
 import os
@@ -450,6 +449,7 @@ if application == "Employee Narrative Evaluation":
                         file_name=filename,
                         mime="text/csv"
                     )
+
 
 
 
